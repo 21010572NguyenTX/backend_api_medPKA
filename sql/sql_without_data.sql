@@ -41,13 +41,30 @@ CREATE TABLE `bookmarks` (
 -- Cấu trúc bảng cho bảng `chat_history`
 --
 
-CREATE TABLE `chat_history` (
-  `id` int(10) UNSIGNED NOT NULL,
+DROP TABLE IF EXISTS `chat_history`;
+CREATE TABLE `conversations` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_id` int(10) UNSIGNED NOT NULL,
-  `question` text NOT NULL,
-  `answer` text NOT NULL,
-  `sources` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`sources`)),
-  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+  `title` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_pinned` tinyint(1) DEFAULT '0',
+  `model_used` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `folder_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Cấu trúc bảng cho bảng `messages`
+--
+
+CREATE TABLE `messages` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `conversation_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `role` enum('user','assistant','system') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `sources` json DEFAULT NULL,
+  `metadata` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -202,11 +219,18 @@ ALTER TABLE `bookmarks`
   ADD KEY `fk_bookmarks_user_id_idx` (`user_id`);
 
 --
--- Chỉ mục cho bảng `chat_history`
+-- Chỉ mục cho bảng `conversations`
 --
-ALTER TABLE `chat_history`
+ALTER TABLE `conversations`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `fk_chat_history_user_id_idx` (`user_id`);
+  ADD KEY `fk_conversations_user_id_idx` (`user_id`);
+
+--
+-- Chỉ mục cho bảng `messages`
+--
+ALTER TABLE `messages`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_messages_conversation_id_idx` (`conversation_id`);
 
 --
 -- Chỉ mục cho bảng `diseases`
@@ -268,10 +292,8 @@ ALTER TABLE `bookmarks`
   MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT cho bảng `chat_history`
+-- Các khóa chính cho bảng `conversations` và `messages` là UUID (không cần AUTO_INCREMENT)
 --
-ALTER TABLE `chat_history`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT cho bảng `diseases`
@@ -326,10 +348,16 @@ ALTER TABLE `bookmarks`
   ADD CONSTRAINT `fk_bookmarks_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
--- Các ràng buộc cho bảng `chat_history`
+-- Các ràng buộc cho bảng `conversations`
 --
-ALTER TABLE `chat_history`
-  ADD CONSTRAINT `fk_chat_history_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE `conversations`
+  ADD CONSTRAINT `fk_conversations_user_id` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+--
+-- Các ràng buộc cho bảng `messages`
+--
+ALTER TABLE `messages`
+  ADD CONSTRAINT `fk_messages_conversation_id` FOREIGN KEY (`conversation_id`) REFERENCES `conversations` (`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 --
 -- Các ràng buộc cho bảng `search_history`

@@ -2,6 +2,7 @@ const axios = require('axios');
 const { pool } = require('../config/database');
 const embeddingService = require('./embeddingService');
 const translationService = require('./translationService');
+const { v4: uuidv4 } = require('uuid');
 
 class ChatbotService {
   /**
@@ -156,80 +157,328 @@ class ChatbotService {
   }
   
   /**
-   * Lưu lịch sử chat vào database
+   * Tạo cuộc trò chuyện mới
    * @param {number} userId - ID người dùng
-   * @param {string} question - Câu hỏi
-   * @param {string} answer - Câu trả lời
-   * @param {Array} sources - Nguồn thông tin
-   * @returns {Promise<boolean>} - true nếu thành công, false nếu thất bại
+   * @param {string} title - Tiêu đề cuộc trò chuyện (tùy chọn)
+   * @returns {Promise<string>} - ID của cuộc trò chuyện mới
    */
-  async saveChat(userId, question, answer, sources = []) {
+  async createConversation(userId, title = null) {
     try {
-      // Chuyển danh sách nguồn thành JSON string
-      const sourcesJSON = JSON.stringify(sources);
+      const conversationId = uuidv4();
       
-      // Lưu vào bảng chat_history
       await pool.query(
-        `INSERT INTO chat_history (user_id, question, answer, sources)
+        `INSERT INTO conversations (id, user_id, title, model_used)
          VALUES (?, ?, ?, ?)`,
-        [userId, question, answer, sourcesJSON]
+        [conversationId, userId, title, process.env.DEEPSEEK_MODEL || 'deepseek-chat']
       );
       
-      return true;
+      return conversationId;
     } catch (error) {
-      console.error('Lỗi lưu lịch sử chat:', error);
-      return false;
+      console.error('Lỗi tạo cuộc trò chuyện:', error);
+      throw error;
     }
   }
   
   /**
-   * Lấy lịch sử chat của người dùng
+   * Lưu tin nhắn vào cuộc trò chuyện
+   * @param {string} conversationId - ID cuộc trò chuyện
+   * @param {string} role - Vai trò (user, assistant, system)
+   * @param {string} content - Nội dung tin nhắn
+   * @param {Array} sources - Nguồn tham khảo (tùy chọn)
+   * @param {Object} metadata - Metadata bổ sung (tùy chọn)
+   * @returns {Promise<string>} - ID của tin nhắn mới
+   */
+  async saveMessage(conversationId, role, content, sources = null, metadata = null) {
+    try {
+      const messageId = uuidv4();
+      const sourcesJSON = sources ? JSON.stringify(sources) : null;
+      const metadataJSON = metadata ? JSON.stringify(metadata) : null;
+      
+      await pool.query(
+        `INSERT INTO messages (id, conversation_id, role, content, sources, metadata)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [messageId, conversationId, role, content, sourcesJSON, metadataJSON]
+      );
+      
+      // Cập nhật thời gian cuộc trò chuyện
+      await pool.query(
+        `UPDATE conversations SET updated_at = NOW() WHERE id = ?`,
+        [conversationId]
+      );
+      
+      return messageId;
+    } catch (error) {
+      console.error('Lỗi lưu tin nhắn:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Xử lý tin nhắn từ người dùng và tạo phản hồi
+   * @param {number} userId - ID người dùng
+   * @param {string} question - Câu hỏi
+   * @param {string} conversationId - ID cuộc trò chuyện (tùy chọn, nếu không có sẽ tạo mới)
+   * @returns {Promise<Object>} - Thông tin tin nhắn và phản hồi
+   */
+  async processMessage(userId, question, conversationId = null) {
+    try {
+      // Nếu không có conversationId, tạo cuộc trò chuyện mới
+      if (!conversationId) {
+        conversationId = await this.createConversation(userId, question.substring(0, 100));
+      } else {
+        // Kiểm tra xem cuộc trò chuyện có tồn tại và thuộc về người dùng không
+        const [conversations] = await pool.query(
+          `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+          [conversationId, userId]
+        );
+        
+        if (conversations.length === 0) {
+          throw new Error('Cuộc trò chuyện không tồn tại hoặc không thuộc về người dùng');
+        }
+      }
+      
+      // Lưu tin nhắn của người dùng
+      const userMessageId = await this.saveMessage(conversationId, 'user', question);
+      
+      // Tạo phản hồi từ AI
+      const { answer, sources } = await this.generateResponse(question);
+      
+      // Lưu tin nhắn của assistant
+      const assistantMessageId = await this.saveMessage(
+        conversationId, 
+        'assistant', 
+        answer, 
+        sources,
+        { model: process.env.DEEPSEEK_MODEL || 'deepseek-chat' }
+      );
+      
+      return {
+        conversation_id: conversationId,
+        user_message_id: userMessageId,
+        assistant_message_id: assistantMessageId,
+        question,
+        answer,
+        sources
+      };
+    } catch (error) {
+      console.error('Lỗi xử lý tin nhắn:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Lấy danh sách cuộc trò chuyện của người dùng
    * @param {number} userId - ID người dùng
    * @param {number} limit - Giới hạn số bản ghi
    * @param {number} offset - Vị trí bắt đầu
-   * @returns {Promise<Object>} - Lịch sử chat và thông tin phân trang
+   * @returns {Promise<Object>} - Danh sách cuộc trò chuyện và thông tin phân trang
    */
-  async getUserChatHistory(userId, limit = 10, offset = 0) {
+  async getConversations(userId, limit = 10, offset = 0) {
     try {
-      // Lấy lịch sử chat
-      const [history] = await pool.query(
-        `SELECT * FROM chat_history 
-         WHERE user_id = ? 
-         ORDER BY created_at DESC 
+      // Chuyển đổi các tham số thành số
+      limit = parseInt(limit) || 10;
+      offset = parseInt(offset) || 0;
+      
+      // Lấy danh sách cuộc trò chuyện
+      const [conversations] = await pool.query(
+        `SELECT c.*, 
+           (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count,
+           (SELECT content FROM messages WHERE conversation_id = c.id AND role = 'user' ORDER BY created_at ASC LIMIT 1) as first_message
+         FROM conversations c
+         WHERE c.user_id = ?
+         ORDER BY c.updated_at DESC, c.created_at DESC
          LIMIT ? OFFSET ?`,
-        [userId, Number(limit), Number(offset)]
+        [userId, limit, offset]
       );
       
-      // Chuyển đổi sources từ JSON string sang object
-      const data = history.map(item => {
-        return {
-          ...item,
-          sources: JSON.parse(item.sources || '[]')
-        };
-      });
-      
-      // Đếm tổng số bản ghi
-      const [totalResult] = await pool.query(
-        `SELECT COUNT(*) AS total 
-         FROM chat_history 
-         WHERE user_id = ?`,
+      // Đếm tổng số cuộc trò chuyện
+      const [countResult] = await pool.query(
+        `SELECT COUNT(*) as total FROM conversations WHERE user_id = ?`,
         [userId]
       );
       
-      const total = totalResult[0].total;
+      const total = countResult[0].total;
       
       return {
-        data,
+        data: conversations,
         pagination: {
           total,
-          limit: Number(limit),
-          offset: Number(offset),
-          has_more: Number(offset) + data.length < total
+          limit,
+          offset,
+          pages: Math.ceil(total / limit),
+          has_more: offset + conversations.length < total
         }
       };
     } catch (error) {
-      console.error('Lỗi lấy lịch sử chat:', error);
-      return { data: [], pagination: { total: 0, limit, offset, has_more: false } };
+      console.error('Lỗi lấy danh sách cuộc trò chuyện:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Lấy chi tiết một cuộc trò chuyện
+   * @param {string} conversationId - ID cuộc trò chuyện
+   * @param {number} userId - ID người dùng
+   * @param {number} limit - Giới hạn số tin nhắn
+   * @param {number} offset - Vị trí bắt đầu
+   * @returns {Promise<Object>} - Thông tin cuộc trò chuyện và các tin nhắn
+   */
+  async getConversation(conversationId, userId, limit = 50, offset = 0) {
+    try {
+      // Chuyển đổi các tham số thành số
+      limit = parseInt(limit) || 50;
+      offset = parseInt(offset) || 0;
+      
+      // Kiểm tra quyền truy cập
+      const [conversations] = await pool.query(
+        `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+        [conversationId, userId]
+      );
+      
+      if (conversations.length === 0) {
+        throw new Error('Cuộc trò chuyện không tồn tại hoặc không thuộc về người dùng');
+      }
+      
+      const conversation = conversations[0];
+      
+      // Lấy danh sách tin nhắn
+      const [messages] = await pool.query(
+        `SELECT * FROM messages
+         WHERE conversation_id = ?
+         ORDER BY created_at ASC
+         LIMIT ? OFFSET ?`,
+        [conversationId, limit, offset]
+      );
+      
+      // Định dạng tin nhắn
+      const formattedMessages = messages.map(message => {
+        return {
+          ...message,
+          sources: message.sources ? JSON.parse(message.sources) : null,
+          metadata: message.metadata ? JSON.parse(message.metadata) : null
+        };
+      });
+      
+      // Đếm tổng số tin nhắn
+      const [countResult] = await pool.query(
+        `SELECT COUNT(*) as total FROM messages WHERE conversation_id = ?`,
+        [conversationId]
+      );
+      
+      const total = countResult[0].total;
+      
+      return {
+        conversation,
+        messages: formattedMessages,
+        pagination: {
+          total,
+          limit,
+          offset,
+          has_more: offset + messages.length < total
+        }
+      };
+    } catch (error) {
+      console.error('Lỗi lấy chi tiết cuộc trò chuyện:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Xóa cuộc trò chuyện
+   * @param {string} conversationId - ID cuộc trò chuyện
+   * @param {number} userId - ID người dùng
+   * @returns {Promise<boolean>} - Kết quả xóa
+   */
+  async deleteConversation(conversationId, userId) {
+    try {
+      // Kiểm tra quyền xóa
+      const [conversations] = await pool.query(
+        `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+        [conversationId, userId]
+      );
+      
+      if (conversations.length === 0) {
+        throw new Error('Cuộc trò chuyện không tồn tại hoặc không thuộc về người dùng');
+      }
+      
+      // Xóa cuộc trò chuyện (tin nhắn sẽ bị xóa tự động nhờ ràng buộc CASCADE)
+      await pool.query(
+        `DELETE FROM conversations WHERE id = ?`,
+        [conversationId]
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('Lỗi xóa cuộc trò chuyện:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Cập nhật tiêu đề cuộc trò chuyện
+   * @param {string} conversationId - ID cuộc trò chuyện
+   * @param {number} userId - ID người dùng
+   * @param {string} title - Tiêu đề mới
+   * @returns {Promise<boolean>} - Kết quả cập nhật
+   */
+  async updateConversationTitle(conversationId, userId, title) {
+    try {
+      // Kiểm tra quyền cập nhật
+      const [conversations] = await pool.query(
+        `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+        [conversationId, userId]
+      );
+      
+      if (conversations.length === 0) {
+        throw new Error('Cuộc trò chuyện không tồn tại hoặc không thuộc về người dùng');
+      }
+      
+      // Cập nhật tiêu đề
+      await pool.query(
+        `UPDATE conversations
+         SET title = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [title, conversationId]
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('Lỗi cập nhật tiêu đề cuộc trò chuyện:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Đánh dấu/bỏ đánh dấu cuộc trò chuyện
+   * @param {string} conversationId - ID cuộc trò chuyện
+   * @param {number} userId - ID người dùng
+   * @param {boolean} isPinned - Trạng thái đánh dấu
+   * @returns {Promise<boolean>} - Kết quả cập nhật
+   */
+  async togglePinConversation(conversationId, userId, isPinned) {
+    try {
+      // Kiểm tra quyền cập nhật
+      const [conversations] = await pool.query(
+        `SELECT * FROM conversations WHERE id = ? AND user_id = ?`,
+        [conversationId, userId]
+      );
+      
+      if (conversations.length === 0) {
+        throw new Error('Cuộc trò chuyện không tồn tại hoặc không thuộc về người dùng');
+      }
+      
+      // Cập nhật trạng thái đánh dấu
+      await pool.query(
+        `UPDATE conversations
+         SET is_pinned = ?, updated_at = NOW()
+         WHERE id = ?`,
+        [isPinned ? 1 : 0, conversationId]
+      );
+      
+      return true;
+    } catch (error) {
+      console.error('Lỗi đánh dấu cuộc trò chuyện:', error);
+      throw error;
     }
   }
 }
