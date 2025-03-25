@@ -1,149 +1,335 @@
-# MedCure API
+# MedCure API Documentation
 
-API Back-end cho ứng dụng tra cứu thuốc và bệnh lý MedCure.
+## Giới thiệu
+MedCure API là một RESTful API cung cấp các dịch vụ liên quan đến y tế, bao gồm quản lý thông tin bệnh, thuốc, người dùng và tương tác chat. API hỗ trợ đa ngôn ngữ (Tiếng Việt và Tiếng Anh).
 
-## Tính năng
+## Cài đặt và Cấu hình
 
-- Xác thực người dùng (đăng ký, đăng nhập, xác minh email)
-- Quản lý người dùng (người dùng và quản trị viên)
-- CRUD Bệnh lý và Thuốc
-- Tìm kiếm theo triệu chứng
-- Hỗ trợ song ngữ Anh-Việt
-- Chatbot AI trợ giúp tra cứu
-- Đánh dấu yêu thích (bookmark)
-- Lịch sử tìm kiếm
-- OAuth đăng nhập (Google)
+### Yêu cầu hệ thống
+- Node.js >= 14.x
+- MySQL >= 5.7
+- Redis (tùy chọn, cho caching)
 
-## Yêu cầu
-
-- Node.js v14+
-- MySQL 5.7+ / MariaDB 10.2+
-
-## Cài đặt
-
-### Sao chép dự án
-
+### Cài đặt
+1. Clone repository:
 ```bash
-git clone <repository-url>
+git clone [repository-url]
 cd medcure-api
 ```
 
-### Cài đặt phụ thuộc
-
+2. Cài đặt dependencies:
 ```bash
 npm install
 ```
 
-### Cấu hình môi trường
-
-Sao chép tệp `.env.example` thành `.env` và cấu hình các biến môi trường:
-
+3. Tạo file .env dựa trên .env.example:
 ```bash
 cp .env.example .env
 ```
 
-Chỉnh sửa `.env` với thông tin cấu hình của bạn.
-
-### Khởi tạo cơ sở dữ liệu
-
-1. Tạo cơ sở dữ liệu MySQL:
-
-```sql
-CREATE DATABASE medcure CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+4. Cấu hình các biến môi trường trong file .env:
+```env
+PORT=3000
+DB_HOST=localhost
+DB_USER=your_username
+DB_PASSWORD=your_password
+DB_NAME=medcure
+JWT_SECRET=your_jwt_secret
+JWT_REFRESH_SECRET=your_refresh_secret
 ```
 
-2. Khởi tạo bảng:
-
+5. Import cơ sở dữ liệu:
 ```bash
-mysql -u yourusername -p medcure < ./sql/schema.sql
+mysql -u your_username -p medcure < sql/sql_without_data.sql
 ```
 
-3. (Tùy chọn) Thêm dữ liệu mẫu:
-
-```bash
-mysql -u yourusername -p medcure < ./sql/seed.sql
-```
-
-## Chạy ứng dụng
-
-### Môi trường phát triển
-
-```bash
-npm run dev
-```
-
-### Môi trường sản xuất
-
+6. Khởi động server:
 ```bash
 npm start
 ```
 
 ## API Endpoints
 
-### Xác thực người dùng
+### Authentication
 
-- `POST /api/auth/register` - Đăng ký người dùng mới
-- `POST /api/auth/login` - Đăng nhập người dùng
-- `POST /api/auth/refresh-token` - Làm mới token
-- `GET /api/auth/verify-email/:token` - Xác minh email
-- `POST /api/auth/send-verification-email` - Gửi lại email xác minh
-- `POST /api/auth/forgot-password` - Khôi phục mật khẩu
-- `POST /api/auth/reset-password` - Đặt lại mật khẩu
-- `POST /api/auth/google` - Đăng nhập với Google
+#### Đăng ký tài khoản
+```http
+POST /api/auth/register
+Content-Type: application/json
 
-### Người dùng
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "username": "username"
+}
+```
 
-- `GET /api/users/profile` - Lấy thông tin người dùng
-- `PUT /api/users/profile` - Cập nhật thông tin người dùng
-- `PUT /api/users/change-password` - Đổi mật khẩu
-- `DELETE /api/users/account` - Xóa tài khoản
+Response:
+```json
+{
+  "status": "success",
+  "message": "Đăng ký thành công",
+  "data": {
+    "id": 1,
+    "email": "user@example.com",
+    "username": "username",
+    "role": "user"
+  }
+}
+```
 
-### Bệnh lý
+#### Đăng nhập
+```http
+POST /api/auth/login
+Content-Type: application/json
 
-- `GET /api/diseases` - Lấy danh sách bệnh lý
-- `GET /api/diseases/:id` - Lấy thông tin chi tiết bệnh lý
-- `GET /api/diseases/search` - Tìm kiếm bệnh lý
-- `POST /api/diseases/symptoms` - Tìm bệnh lý theo triệu chứng
-- `POST /api/diseases` - Thêm bệnh lý mới (Admin)
-- `PUT /api/diseases/:id` - Cập nhật bệnh lý (Admin)
-- `DELETE /api/diseases/:id` - Xóa bệnh lý (Admin)
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
 
-### Thuốc
+Response:
+```json
+{
+  "status": "success",
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIs...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIs...",
+    "user": {
+      "id": 1,
+      "email": "user@example.com",
+      "username": "username",
+      "role": "user"
+    }
+  }
+}
+```
 
-- `GET /api/medicines` - Lấy danh sách thuốc
-- `GET /api/medicines/:id` - Lấy thông tin chi tiết thuốc
-- `GET /api/medicines/search` - Tìm kiếm thuốc
-- `GET /api/medicines/manufacturer` - Lọc thuốc theo nhà sản xuất
-- `POST /api/medicines` - Thêm thuốc mới (Admin)
-- `PUT /api/medicines/:id` - Cập nhật thuốc (Admin)
-- `DELETE /api/medicines/:id` - Xóa thuốc (Admin)
+### Diseases (Bệnh)
+
+#### Lấy danh sách bệnh
+```http
+GET /api/diseases?page=1&limit=10
+```
+
+Response:
+```json
+{
+  "status": "success",
+  "data": {
+    "diseases": [
+      {
+        "id": 1,
+        "disease_name": "Diabetes",
+        "disease_name_vi": "Bệnh tiểu đường",
+        "description": "A chronic condition...",
+        "description_vi": "Một bệnh mãn tính...",
+        "symptoms": "Increased thirst...",
+        "symptoms_vi": "Tăng khát nước...",
+        "image_url": "https://example.com/diabetes.jpg"
+      }
+    ],
+    "pagination": {
+      "total": 100,
+      "page": 1,
+      "limit": 10,
+      "totalPages": 10
+    }
+  }
+}
+```
+
+#### Tìm kiếm bệnh
+```http
+GET /api/diseases/search?q=diabetes&page=1&limit=10
+```
+
+Response: Tương tự như lấy danh sách bệnh
+
+### Medicines (Thuốc)
+
+#### Lấy danh sách thuốc
+```http
+GET /api/medicines?page=1&limit=10
+```
+
+Response:
+```json
+{
+  "status": "success",
+  "data": {
+    "medicines": [
+      {
+        "id": 1,
+        "medicine_name": "Metformin",
+        "medicine_name_vi": "Metformin",
+        "description": "An oral diabetes medicine...",
+        "description_vi": "Thuốc trị tiểu đường...",
+        "dosage": "500mg twice daily",
+        "dosage_vi": "500mg hai lần mỗi ngày",
+        "usage": "Take with meals...",
+        "usage_vi": "Uống trong bữa ăn...",
+        "side_effects": "Nausea, vomiting...",
+        "side_effects_vi": "Buồn nôn, nôn...",
+        "image_url": "https://example.com/metformin.jpg"
+      }
+    ],
+    "pagination": {
+      "total": 100,
+      "page": 1,
+      "limit": 10,
+      "totalPages": 10
+    }
+  }
+}
+```
+
+### Users (Người dùng)
+
+#### Lấy thông tin profile
+```http
+GET /api/users/profile
+Authorization: Bearer <access_token>
+```
+
+Response:
+```json
+{
+  "status": "success",
+  "data": {
+    "id": 1,
+    "email": "user@example.com",
+    "username": "username",
+    "avatar_url": "https://example.com/avatar.jpg",
+    "role": "user",
+    "is_email_verified": true
+  }
+}
+```
+
+#### Cập nhật profile
+```http
+PUT /api/users/profile
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "username": "new_username",
+  "avatar_url": "https://example.com/new-avatar.jpg"
+}
+```
+
+### Bookmarks (Dấu trang)
+
+#### Lấy danh sách bookmark
+```http
+GET /api/users/bookmarks?page=1&limit=10
+Authorization: Bearer <access_token>
+```
+
+Response:
+```json
+{
+  "status": "success",
+  "data": {
+    "bookmarks": [
+      {
+        "id": 1,
+        "content_type": "disease",
+        "content_id": 1,
+        "content": {
+          "disease_name": "Diabetes",
+          "disease_name_vi": "Bệnh tiểu đường"
+        },
+        "created_at": "2024-03-24T12:00:00Z"
+      }
+    ],
+    "pagination": {
+      "total": 10,
+      "page": 1,
+      "limit": 10,
+      "totalPages": 1
+    }
+  }
+}
+```
 
 ### Chat
 
-- `POST /api/chat` - Gửi câu hỏi đến chatbot
-- `GET /api/chat/history` - Lấy lịch sử chat
-- `DELETE /api/chat/history/:id` - Xóa 1 mục chat
-- `DELETE /api/chat/history` - Xóa toàn bộ lịch sử chat
+#### Gửi tin nhắn chat
+```http
+POST /api/chat
+Authorization: Bearer <access_token>
+Content-Type: application/json
 
-### Lịch sử tìm kiếm
+{
+  "message": "Các triệu chứng của bệnh tiểu đường là gì?"
+}
+```
 
-- `GET /api/users/search-history` - Lấy lịch sử tìm kiếm
-- `DELETE /api/users/search-history/:id` - Xóa 1 mục tìm kiếm
-- `DELETE /api/users/search-history` - Xóa toàn bộ lịch sử tìm kiếm
+Response:
+```json
+{
+  "status": "success",
+  "data": {
+    "answer": "Các triệu chứng chính của bệnh tiểu đường bao gồm...",
+    "sources": [
+      {
+        "type": "disease",
+        "id": 1,
+        "title": "Diabetes",
+        "title_vi": "Bệnh tiểu đường"
+      }
+    ]
+  }
+}
+```
 
-### Bookmark (Đánh dấu)
+## Xác thực và Phân quyền
 
-- `GET /api/users/bookmarks` - Lấy danh sách bookmark
-- `POST /api/users/bookmarks` - Thêm bookmark mới
-- `DELETE /api/users/bookmarks/:id` - Xóa bookmark
+API sử dụng JWT (JSON Web Token) cho xác thực. Các request cần xác thực phải bao gồm header:
+```
+Authorization: Bearer <access_token>
+```
 
-### Quản trị viên
+### Các role người dùng
+- `user`: Người dùng thông thường
+- `admin`: Quản trị viên với quyền truy cập cao hơn
 
-- `GET /api/users/all` - Lấy danh sách người dùng (Admin)
-- `GET /api/users/:id` - Lấy thông tin người dùng (Admin)
-- `PUT /api/users/:id/role` - Cập nhật quyền người dùng (Admin)
-- `DELETE /api/users/:id` - Xóa người dùng (Admin)
+## Xử lý Lỗi
 
-## License
+API trả về các mã lỗi HTTP chuẩn:
+- 200: Thành công
+- 400: Lỗi yêu cầu
+- 401: Chưa xác thực
+- 403: Không có quyền
+- 404: Không tìm thấy
+- 500: Lỗi server
 
-MIT 
+Format lỗi:
+```json
+{
+  "status": "error",
+  "message": "Mô tả lỗi",
+  "code": "ERROR_CODE"
+}
+```
+
+## Rate Limiting
+
+API có giới hạn số lượng request:
+- 100 requests/phút cho các endpoint công khai
+- 1000 requests/phút cho các endpoint yêu cầu xác thực
+
+## Caching
+
+Một số endpoint được cache để tối ưu hiệu suất:
+- Danh sách bệnh/thuốc: 5 phút
+- Chi tiết bệnh/thuốc: 1 giờ
+
+## Hỗ trợ
+
+Nếu bạn cần hỗ trợ hoặc có câu hỏi, vui lòng liên hệ:
+- Email: support@medcure.com
+- Issue Tracker: [GitHub Issues](https://github.com/your-repo/issues) 
